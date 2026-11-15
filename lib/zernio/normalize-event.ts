@@ -29,14 +29,24 @@ export function verifyZernioSignature({ rawBody, signature, secret }: {
   return timingSafeEqual(Buffer.from(signature, 'hex'), expected);
 }
 
+const normalizeHandle = (value: string | undefined) => value?.trim().replace(/^@/, '').toLowerCase() || undefined;
+
 export function normalizeZernioEvent({ payload, account }: {
-  payload: unknown; account: { zernioAccountId: string | null; instagramId: string };
+  payload: unknown; account: { zernioAccountId: string | null; instagramId: string; username?: string | null };
 }): InstagramPayload | null {
   const parsed = envelopeSchema.safeParse(payload);
   if (!parsed.success || parsed.data.account.id !== account.zernioAccountId) return null;
   const { event, comment, message, metadata, conversation, statusAt } = parsed.data;
   const entry: InstagramPayload['entry'][number] = { id: account.instagramId, time: Date.now() };
   if (event === 'comment.received' && comment) {
+    // Zernio can report the connected account's own comments (including our
+    // public replies) with an author id that differs from account.instagramId,
+    // so the id check in parseCommentEvents misses them and a keyword-less
+    // campaign would answer its own replies forever. Match on the author
+    // handle and Zernio's own account id as well.
+    const authorHandle = normalizeHandle(comment.author.username);
+    if (authorHandle && authorHandle === normalizeHandle(account.username ?? undefined)) return null;
+    if (account.zernioAccountId && comment.author.id === account.zernioAccountId) return null;
     entry.changes = [{ field: 'comments', value: { id: comment.id, text: comment.text, from: comment.author, media: { id: comment.platformPostId } } }];
   } else if (event === 'message.received' && message?.direction === 'incoming') {
     const sender = { id: message.sender.id };
