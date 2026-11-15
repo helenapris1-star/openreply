@@ -5,6 +5,7 @@ import {
   isDeliveryUnconfirmed,
 } from "@/lib/instagram/delivery-errors";
 import { claimCommentDelivery, MAX_COMMENT_SEND_ATTEMPTS } from "./comment-delivery";
+import { isOwnReply, rememberOwnReply } from "./own-replies";
 import { createHash } from "node:crypto";
 import { UnrecoverableError, Worker, type Job } from "bullmq";
 import {
@@ -289,6 +290,10 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   } = job.data;
   const requeueAttempt = job.data.requeueAttempt ?? 0;
 
+  // A comment that is one of our own public replies must never trigger a
+  // campaign, otherwise an "any word" campaign answers itself in a loop.
+  if (await isOwnReply(commentId)) return;
+
   const automations = await prisma.automation.findMany({
     where: {
       ...connectionScope(job.data),
@@ -466,12 +471,13 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           commenterName,
           trackedLinks: automation.trackedLinks,
         });
-        await sendCommentReply({
+        const postedReply = await sendCommentReply({
           context: accessToken,
           commentId: commentId,
           message: publicReply,
           postId: mediaId,
         });
+        await rememberOwnReply(postedReply?.id);
         await prisma.dmLog.update({
           where: {
             automationId_commentId: { automationId: automation.id, commentId },
