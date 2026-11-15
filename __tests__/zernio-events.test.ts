@@ -21,6 +21,14 @@ describe('Zernio event boundary', () => {
     expect(parseCommentEvents(result!)).toEqual([{ instagramAccountId: 'ig1', commentId: 'comment1', commentText: 'LINK', commenterId: 'person1', commenterName: 'reader', mediaId: 'media1', originalMediaId: undefined }]);
     expect(normalizeZernioEvent({ payload, account: { ...account, zernioAccountId: 'other' } })).toBeNull();
   });
+  it('drops comments written by the connected account even when the author id differs', () => {
+    const own = { ...account, username: 'helena_pris_' };
+    const payload = (author: { id: string; username?: string }) => ({ ...envelope, event: 'comment.received', comment: { id: 'c', platformPostId: 'p', text: 'Pssst', author } });
+    expect(normalizeZernioEvent({ payload: payload({ id: 'other-id', username: 'helena_pris_' }), account: own })).toBeNull();
+    expect(normalizeZernioEvent({ payload: payload({ id: 'other-id', username: '@Helena_Pris_' }), account: own })).toBeNull();
+    expect(normalizeZernioEvent({ payload: payload({ id: 'za1' }), account: own })).toBeNull();
+    expect(normalizeZernioEvent({ payload: payload({ id: 'person1', username: 'reader' }), account: own })).not.toBeNull();
+  });
   it('excludes self comments and outgoing message echoes', () => {
     const comment = normalizeZernioEvent({ payload: { ...envelope, event: 'comment.received', comment: { id: 'c', platformPostId: 'p', text: 'LINK', author: { id: 'ig1' } } }, account });
     expect(parseCommentEvents(comment!)).toEqual([]);
